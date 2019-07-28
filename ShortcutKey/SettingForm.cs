@@ -206,7 +206,7 @@ namespace ShortcutKey
             return true;
         }
 
-        private async void ScreenshotKeyButton_Click(object sender, EventArgs e)
+        private void ScreenshotKeyButton_Click(object sender, EventArgs e)
         {
             Keys key;
             screenshot.Stop();
@@ -224,7 +224,7 @@ namespace ShortcutKey
         }
 
 
-        private async void TopMostKeyButton_Click(object sender, EventArgs e)
+        private void TopMostKeyButton_Click(object sender, EventArgs e)
         {
             Keys key;
             screenshot.Stop();
