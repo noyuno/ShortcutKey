@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace ShortcutKey
 {
@@ -16,19 +17,20 @@ namespace ShortcutKey
         readonly Keyboard screenshot;
         readonly Keyboard topMost;
         const string registoryStartupPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        NotifyIcon notifyIcon;
 
         public SettingForm()
         {
             InitializeComponent();
             this.Text = Application.ProductName;
             this.Visible = false;
-            var notify = new NotifyIcon
+            this.notifyIcon = new NotifyIcon
             {
                 Icon = Resources.Notify,
                 Visible = true,
                 Text = "ShortcutKey"
             };
-            notify.DoubleClick += (object sender, EventArgs e) =>
+            notifyIcon.DoubleClick += (object sender, EventArgs e) =>
               {
                   this.WindowState = FormWindowState.Normal;
                   this.Show();
@@ -53,13 +55,13 @@ namespace ShortcutKey
                 Application.Exit();
             };
             menu.Items.Add(exitMenuItem);
-            notify.ContextMenuStrip = menu;
+            notifyIcon.ContextMenuStrip = menu;
 
             this.screenshot = new Keyboard(async () =>
               {
                   var title = "Take screenshot";
                   this.Text = title;
-                  Bitmap bmp = new Bitmap(Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height, PixelFormat.Format24bppRgb);
+                  Bitmap bmp = new Bitmap(Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
                   Graphics g = Graphics.FromImage(bmp);
                   g.CopyFromScreen(new Point(0, 0), new Point(0, 0), bmp.Size);
                   g.Dispose();
@@ -67,14 +69,15 @@ namespace ShortcutKey
                   {
                       if (!Directory.Exists(ScreenshotSavePathTextBox.Text))
                           throw new DirectoryNotFoundException();
-                      var dest = Path.Combine(ScreenshotSavePathTextBox.Text, DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png");
+                      var filename = DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png";
+                      var dest = Path.Combine(ScreenshotSavePathTextBox.Text, filename);
                       if (File.Exists(Path.Combine(
                           Path.GetDirectoryName(Application.ExecutablePath), "pngquant.exe")))
                       {
                           var file = Path.GetTempFileName() + ".png";
                           bmp.Save(file, ImageFormat.Png);
                           var p = Process.Start(new ProcessStartInfo("pngquant.exe",
-                              string.Format("--force --verbose --quality=65-95 -o {0} -- {1}", dest, file))
+                              string.Format("--force --verbose --quality=50-95 -o {0} -- {1}", dest, file))
                           {
                               UseShellExecute = false,
                               CreateNoWindow = true,
@@ -94,10 +97,46 @@ namespace ShortcutKey
                           {
                               throw new System.ComponentModel.Win32Exception(p.ExitCode, stderr);
                           }
+
+                          var q = Regex.Match(stderr, @"\(Q=[0-9][0-9]\)");
+                          string t;
+                          if (q.Success)
+                          {
+                              t = string.Format("file: {0}\npngquant quality: {1}", filename, q);
+                          }
+                          else
+                          {
+                              t = string.Format("file: {0}\npngquant quality: ?", filename);
+                          }
+                          //this.notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
+                          var defaultIcon = (Icon)this.notifyIcon.Icon.Clone();
+                          this.notifyIcon.Icon = Icon.FromHandle(bmp.GetHicon());
+                          this.notifyIcon.BalloonTipTitle = "Screenshot";
+                          this.notifyIcon.BalloonTipText = t;
+                          this.notifyIcon.BalloonTipClicked += (sender, e) =>
+                          {
+                              Process.Start(dest);
+                          };
+                          this.notifyIcon.ShowBalloonTip(1000);
+                          await Task.Delay(1000);
+                          this.notifyIcon.Icon = defaultIcon;
                       }
                       else
                       {
                           bmp.Save(dest, ImageFormat.Png);
+                          var defaultIcon = (Icon)this.notifyIcon.Icon.Clone();
+                          this.notifyIcon.Icon = Icon.FromHandle(bmp.GetHicon());
+                          //this.notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
+                          this.notifyIcon.BalloonTipTitle = "Screenshot";
+                          this.notifyIcon.BalloonTipText = string.Format("file: {0}", filename);
+                          this.notifyIcon.BalloonTipClicked += (sender, e) =>
+                            {
+                                Process.Start(dest);
+                            };
+                          this.notifyIcon.ShowBalloonTip(1000);
+                          await Task.Delay(1000);
+                          this.notifyIcon.Icon = defaultIcon;
+
                       }
                   }
                   catch (System.ComponentModel.Win32Exception ex)
