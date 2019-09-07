@@ -6,25 +6,28 @@ using System.IO;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Diagnostics;
 
 namespace ShortcutKey
 {
     public partial class SettingForm : Form
     {
         bool CloseByMenu = false;
-        Keyboard screenshot;
-        Keyboard topMost;
-        const string none = "(none)";
+        readonly Keyboard screenshot;
+        readonly Keyboard topMost;
+        const string registoryStartupPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
         public SettingForm()
         {
             InitializeComponent();
             this.Text = Application.ProductName;
             this.Visible = false;
-            var notify = new NotifyIcon();
-            notify.Icon = Resources.Notify;
-            notify.Visible = true;
-            notify.Text = "ShortcutKey";
+            var notify = new NotifyIcon
+            {
+                Icon = Resources.Notify,
+                Visible = true,
+                Text = "ShortcutKey"
+            };
             notify.DoubleClick += (object sender, EventArgs e) =>
               {
                   this.WindowState = FormWindowState.Normal;
@@ -41,8 +44,10 @@ namespace ShortcutKey
                 this.Activate();
             };
             menu.Items.Add(settingMenuItem);
-            var exitMenuItem = new ToolStripMenuItem();
-            exitMenuItem.Text = "&Exit";
+            var exitMenuItem = new ToolStripMenuItem
+            {
+                Text = "&Exit"
+            };
             exitMenuItem.Click += (object sender, EventArgs e) => {
                 this.CloseByMenu = true;
                 Application.Exit();
@@ -54,7 +59,7 @@ namespace ShortcutKey
               {
                   var title = "Take screenshot";
                   this.Text = title;
-                  Bitmap bmp = new Bitmap(Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
+                  Bitmap bmp = new Bitmap(Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height, PixelFormat.Format24bppRgb);
                   Graphics g = Graphics.FromImage(bmp);
                   g.CopyFromScreen(new Point(0, 0), new Point(0, 0), bmp.Size);
                   g.Dispose();
@@ -62,7 +67,42 @@ namespace ShortcutKey
                   {
                       if (!Directory.Exists(ScreenshotSavePathTextBox.Text))
                           throw new DirectoryNotFoundException();
-                      bmp.Save(Path.Combine(ScreenshotSavePathTextBox.Text, DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png"), ImageFormat.Png);
+                      var dest = Path.Combine(ScreenshotSavePathTextBox.Text, DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png");
+                      if (File.Exists(Path.Combine(
+                          Path.GetDirectoryName(Application.ExecutablePath), "pngquant.exe")))
+                      {
+                          var file = Path.GetTempFileName() + ".png";
+                          bmp.Save(file, ImageFormat.Png);
+                          var p = Process.Start(new ProcessStartInfo("pngquant.exe",
+                              string.Format("--force --verbose --quality=65-95 -o {0} -- {1}", dest, file))
+                          {
+                              UseShellExecute = false,
+                              CreateNoWindow = true,
+                              RedirectStandardOutput = true,
+                              RedirectStandardError = true
+                          });
+                          string stdout, stderr;
+                          if ((stdout = p.StandardOutput.ReadToEnd()) != "")
+                          {
+                              Debug.Write(stdout.Replace("\r\r\n", "\n"));
+                          }
+                          if(( stderr = p.StandardError.ReadToEnd())!="")
+                          {
+                              Debug.Write(stderr.Replace("\r\r\n", "\n"));
+                          }
+                          if (p.ExitCode!=0)
+                          {
+                              throw new System.ComponentModel.Win32Exception(p.ExitCode, stderr);
+                          }
+                      }
+                      else
+                      {
+                          bmp.Save(dest, ImageFormat.Png);
+                      }
+                  }
+                  catch (System.ComponentModel.Win32Exception ex)
+                  {
+                      MessageBox.Show(ex.Message, string.Format("pngquant returned code {0}", ex.ErrorCode), MessageBoxButtons.OK, MessageBoxIcon.Error);
                   }
                   catch (Exception ex)
                   {
@@ -74,8 +114,10 @@ namespace ShortcutKey
                       await Task.Delay(1000);
                       ResetTitle(title);
                   }
-              });
-            this.screenshot.Key = Settings.Default.ScreenshotKey;
+              })
+            {
+                Key = Settings.Default.ScreenshotKey
+            };
 
             this.topMost = new Keyboard(async () =>
               {
@@ -95,15 +137,17 @@ namespace ShortcutKey
                   await Task.Delay(1000);
                   ResetTitle(title);
                   this.Text = Application.ProductName;
-              });
-            this.topMost.Key = Settings.Default.TopMostKey;
+              })
+            {
+                Key = Settings.Default.TopMostKey
+            };
 
             this.ScreenshotCheckBox.Checked = Settings.Default.Screenshot;
             this.ScreenshotKeyButton.Text = Settings.Default.ScreenshotKey.ToString();
             this.ScreenshotSavePathTextBox.Text = Settings.Default.ScreenshotSaveAs;
             this.TopMostCheckBox.Checked = Settings.Default.TopMost;
             this.TopMostKeyButton.Text = Settings.Default.TopMostKey.ToString();
-            this.AutoStartCheckBox.Checked = Settings.GetRegistory(@"Software\Microsoft\Windows\CurrentVersion\Run", Application.ProductName, "foo") != "foo";
+            this.AutoStartCheckBox.Checked = Settings.GetRegistory(registoryStartupPath, Application.ProductName, "foo") != "foo";
         }
 
         void ResetTitle(string expected)
@@ -155,9 +199,9 @@ namespace ShortcutKey
             try
             {
                 if (AutoStartCheckBox.Checked)
-                    Settings.SetRegistory(@"Software\Microsoft\Windows\CurrentVersion\Run", Application.ProductName, Application.ExecutablePath);
+                    Settings.SetRegistory(registoryStartupPath, Application.ProductName, Application.ExecutablePath);
                 else
-                    Settings.RemoveRegistory(@"Software\Microsoft\Windows\CurrentVersion\Run", Application.ProductName);
+                    Settings.RemoveRegistory(registoryStartupPath, Application.ProductName);
             }
             catch(Exception ex)
             {
@@ -195,15 +239,17 @@ namespace ShortcutKey
         private bool GetKey(string target, Keys current, out Keys key)
         {
             key = Keys.None;
-            var kf = new KeyForm(target, current);
-            var dr = kf.ShowDialog();
-            if (dr == DialogResult.Yes)
-                key = kf.Key;
-            else if (dr == DialogResult.No)
-                key = Keys.None;
-            else
-                return false;
-            return true;
+            using (var kf = new KeyForm(target, current))
+            {
+                var dr = kf.ShowDialog();
+                if (dr == DialogResult.Yes)
+                    key = kf.Key;
+                else if (dr == DialogResult.No)
+                    key = Keys.None;
+                else
+                    return false;
+                return true;
+            }
         }
 
         private void ScreenshotKeyButton_Click(object sender, EventArgs e)
@@ -226,10 +272,9 @@ namespace ShortcutKey
 
         private void TopMostKeyButton_Click(object sender, EventArgs e)
         {
-            Keys key;
             screenshot.Stop();
             topMost.Stop();
-            if (GetKey("TopMost Key", Settings.Default.TopMostKey, out key))
+            if (GetKey("TopMost Key", Settings.Default.TopMostKey, out Keys key))
             {
                 TopMostKeyButton.Text = key.ToString();
                 Settings.Default.TopMostKey = key;
